@@ -3600,6 +3600,58 @@ void akashi_configure_cpu_port(net_common_t *net_common)
     sl_set_cpu_port(cpu_port);
 }
 
+static ssize_t digico_mdiolock_store(
+    struct class *class,
+    struct class_attribute *attr,
+    const char *buf,
+    size_t len)
+{
+    pr_info("digico_mdiolock_store: %s\n", buf);
+    return len;
+}
+static CLASS_ATTR_WO(digico_mdiolock);
+
+static ssize_t digico_hypermode_store(
+    struct class *class,
+    struct class_attribute *attr,
+    const char *buf,
+    size_t len)
+{
+    pr_info("digico_hypermode_store: %s\n", buf);
+    return len;
+}
+static CLASS_ATTR_WO(digico_hypermode);
+
+
+static int register_digico_sysfs_attributes(struct class* class)
+{
+    int ret = 0;
+
+    ret = class_create_file(class, &class_attr_digico_mdiolock);
+    if (ret) {
+        pr_err("unable to create digico_mdiolock sysfs (%d)\n", ret);
+        return ret;
+    }
+
+    ret = class_create_file(class, &class_attr_digico_hypermode);
+    if (ret) {
+        pr_err("unable to create digico_hypermode sysfs (%d)\n", ret);
+        goto out_rm_lockout;
+    }
+
+    return ret;
+
+out_rm_lockout:
+    class_remove_file(class, &class_attr_digico_mdiolock);
+    return ret;
+}
+
+static void unregister_digico_sysfs_attributes(struct class* class)
+{
+    class_remove_file(class, &class_attr_digico_mdiolock);
+    class_remove_file(class, &class_attr_digico_hypermode);
+}
+
 static void unregister_char_device(struct net_device *dev)
 {
     net_local_t *net_local = netdev_get_priv(dev);
@@ -3607,6 +3659,8 @@ static void unregister_char_device(struct net_device *dev)
 #ifdef CONFIG_AKASHI_DEBUG_CHAR_DEV
     printk(KERN_INFO "%s...\n", __func__);
 #endif
+
+    unregister_digico_sysfs_attributes(net_local->denet_class);
 
     device_destroy(net_local->denet_class, net_local->denet_devt);
     device_destroy(net_local->denet_class, net_local->denet_ps_devt);
@@ -3701,7 +3755,9 @@ static int register_char_devices(struct net_device *dev)
     }
 #endif
 
-    return 0;
+    status = register_digico_sysfs_attributes(net_local->denet_class);
+
+    return status;
 }
 
 #ifdef CONFIG_AKASHI_CONFIGURE_SWITCH
