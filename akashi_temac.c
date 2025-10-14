@@ -3606,7 +3606,27 @@ static ssize_t digico_mdiolock_store(
     const char *buf,
     size_t len)
 {
+    unsigned int mdio_lock_enable;
     pr_info("digico_mdiolock_store: %s\n", buf);
+
+    if (sscanf(buf, "%u", &mdio_lock_enable) != 1)
+        return -EINVAL;
+
+    if (!net_common_context)
+        return -ENODEV;
+
+    switch(mdio_lock_enable)
+    {
+        case 0:
+            net_common_context->mdio_locked = false;
+            break;
+        case 1:
+            net_common_context->mdio_locked = true;
+            break;
+        default:
+            pr_err("Invalid digico_mdiolock value: %u\n", mdio_lock_enable);
+            return -EINVAL;
+    }
     return len;
 }
 static CLASS_ATTR_WO(digico_mdiolock);
@@ -3617,7 +3637,27 @@ static ssize_t digico_hypermode_store(
     const char *buf,
     size_t len)
 {
+    unsigned int hyper_mode_enable;
     pr_info("digico_hypermode_store: %s\n", buf);
+
+    if (sscanf(buf, "%u", &hyper_mode_enable) != 1)
+        return -EINVAL;
+
+    if (!net_common_context)
+        return -ENODEV;
+
+    switch(hyper_mode_enable)
+    {
+        case 0:
+            pr_info("hyper disable\n");
+            break;
+        case 1:
+            pr_info("hyper enable\n");
+            break;
+        default:
+            pr_err("Invalid digico_hypermode value: %u\n", hyper_mode_enable);
+            return -EINVAL;
+    }
     return len;
 }
 static CLASS_ATTR_WO(digico_hypermode);
