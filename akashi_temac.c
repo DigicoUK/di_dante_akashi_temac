@@ -5460,6 +5460,7 @@ static int __init akashi_init(void)
 
     printk(KERN_INFO "%s, driver version %s\n", DRIVER_NAME, DRIVER_VERSION);
     printk(KERN_INFO "%s\n", DRIVER_AUTHOR);
+    printk(KERN_INFO "Modified for Hyperport by DiGiCo UK Ltd <liam.pribis@digiconsoles.com>\n");
 
     /* Register the platform driver */
     retval = platform_driver_register(&akashi_platform_driver);
