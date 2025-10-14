@@ -1,0 +1,44 @@
+#
+# Akashi Temac Network device configuration
+#
+
+config AKASHI_TEMAC
+	tristate "Akashi-Temac Ethernet device"
+	default m
+	help
+		Audinate Akashi Temac FPGA based Ethernet device driver support.
+
+config AKASHI_MARVEL_SWITCH_LED
+	bool "Configure Marvel Switch LEDs"
+	depends on AKASHI_TEMAC
+	default n
+
+config AKASHI_CTL_PORT_6
+	bool "Configure port 6 as control port"
+	depends on AKASHI_TEMAC
+	default n
+
+config AKASHI_EMAC_0_SMI_IRQ
+	bool "Use SMI Interrupt"
+	depends on AKASHI_TEMAC
+	default y
+
+config AKASHI_CONFIGURE_SWITCH
+	bool "Configure network switch on startup"
+	depends on AKASHI_TEMAC
+	default n
+
+config AKASHI_DYNAMIC_MAJOR
+	bool "Use dynamic major number"
+	depends on AKASHI_TEMAC
+	default n
+	help
+		This feature requires kernel support to allocate a device major number when
+		registering a character device.
+
+config AKASHI_PS_MAC
+	bool "Enable ZYNQ PS MAC interface"
+	depends on AKASHI_TEMAC
+	default n
+	help
+		Enable this feature to use the ZYNQ PS MAC when FPGA uses this interface.
