@@ -1189,6 +1189,10 @@ static void network_led_action(char network_type, uint32_t network_ports, char a
 {
     switch_port_led_action action_cmd;
 
+    // DIGICO patch: do not change switch LEDs when MDIO locked out
+    if (net_common_context && net_common_context->mdio_locked)
+        return;
+
     if (action == IDENTIFY_LED_FORCE_ON)
     {
         action_cmd = SWITCH_LED_CONTROL_FORCE_ON;
@@ -1307,6 +1311,11 @@ static void check_link_status(struct timer_list *t)
     /* Set up the timer so we'll get called again in 1 seconds. */
     net_common->check_link_st_timer.expires = jiffies + TIMER_DELAY_1SEC;
     add_timer(&net_common->check_link_st_timer);
+
+    // DIGICO patch: do not poll switch when MDIO locked out
+    if (net_common->mdio_locked)
+        return;
+
     network_mii_process(net_common);
 }
 #endif
@@ -2308,6 +2317,10 @@ static irqreturn_t smi_interrupt(int irq, void *dev_id)
 static void denet_smiBH(unsigned long p)
 {
     net_common_t *net_common = (net_common_t *)p;
+
+    // DIGICO patch: ignore switch IRQ when MDIO locked out
+    if (net_common->mdio_locked)
+        return;
 
     // switch interrupt service - clear interrupts status for phys & others
     if (net_common->dante_net_st.net_chip_info.adapter_type == ADAPTER_SWITCH)
