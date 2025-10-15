@@ -3121,6 +3121,8 @@ static int denet_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 	unsigned long flags;
 	int Result;
 
+    pr_err("@@@@@@ denet_ioctl called with cmd %d\n", cmd);
+
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,15,0)
 	// Private dev IO control
 	if (cmd >= SIOCDEVPRIVATE && cmd <= SIOCDEVPRIVATE + 15)
