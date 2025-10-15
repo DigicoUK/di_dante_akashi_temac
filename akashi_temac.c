@@ -183,6 +183,11 @@ network_adapter_t network_adapter_info;
 
 static net_common_t *net_common_context = NULL;
 
+// bitmask of port numbers assigned to first RGMII in hyperport mode
+static unsigned int digico_hyperport_primary_ports = 0;
+// bitmask of port numbers assigned to second RGMII in hyperport mode
+static unsigned int digico_hyperport_secondary_ports = 0;
+
 static int denet_private_ioctl(struct net_device *dev, struct ifreq *rq, void __user *data, int cmd);
 
 #ifdef CONFIG_AKASHI_DEBUG_DUMP_SKB_LIST
@@ -3613,10 +3618,55 @@ void akashi_configure_cpu_port(net_common_t *net_common)
     sl_set_cpu_port(cpu_port);
 }
 
+static void enter_hyperport_mode(void)
+{
+    int port_idx;
+    pr_info("enter_hyperport_mode");
+    if (!digico_hyperport_primary_ports || !digico_hyperport_secondary_ports)
+        pr_warn("One of primary or secondary are not mapped to any ports for hyperport");
+
+    // build VLAN mapping. Format is one nibble per port. Port 0 is in the least
+    // significant nibble The bits of the nibble assign the port to:
+    // ETH_SWITCH_VLAN_PRI = (1 << 0)
+    // ETH_SWITCH_VLAN_SEC = (1 << 1)
+    // ETH_SWITCH_VLAN_2   = (1 << 2)
+    // ETH_SWITCH_VLAN_3   = (1 << 3)
+    // VLAN_2 and VLAN_3 enable 802.1Q external VLAN tagging which we don't want
+    uint32_t vlan_config = 0;
+    for (port_idx = 0; port_idx < sl_get_max_switch_port_number(); port_idx++) {
+        if (digico_hyperport_primary_ports & (1 << port_idx)) {
+            // this port is assigned to primary
+            vlan_config |= ETH_SWITCH_VLAN_PRI << (4 * port_idx);
+        }
+        if (digico_hyperport_secondary_ports & (1 << port_idx)) {
+            // this port is assigned to primary
+            vlan_config |= ETH_SWITCH_VLAN_SEC << (4 * port_idx);
+        }
+    }
+    // Port 5 (RGMII 0) is always primary VLAN otherwise no packets reach PL
+    vlan_config |= ETH_SWITCH_VLAN_PRI << (4 * 5);
+    // Port 6 (RGMII 1) is always secondary VLAN
+    vlan_config |= ETH_SWITCH_VLAN_SEC << (4 * 6);
+
+    sl_set_switch_vlan_config_all(vlan_config);
+}
+
+static void leave_hyperport_mode(void)
+{
+    pr_info("leave_hyperport_mode");
+    // restore Dante VLAN config
+    sl_set_switch_vlan_config_all(net_common_context->config.vlan_config);
+    // refresh port status
+    get_phy_status(net_common_context);
+}
+
 static void set_mdio_locked(bool locked)
 {
-    net_common_context->mdio_locked = locked;
-    wmb(); // poor man's atomics :^)
+    pr_info("temac MDIO %s", locked ? "locked" : "unlocked");
+    if (net_common_context) {
+        net_common_context->mdio_locked = locked;
+        wmb(); // poor man's atomics :^)
+    }
 }
 
 static ssize_t digico_mdiolock_store(
@@ -3626,13 +3676,9 @@ static ssize_t digico_mdiolock_store(
     size_t len)
 {
     unsigned int mdio_lock_enable;
-    pr_info("digico_mdiolock_store: %s\n", buf);
 
     if (sscanf(buf, "%u", &mdio_lock_enable) != 1)
         return -EINVAL;
-
-    if (!net_common_context)
-        return -ENODEV;
 
     switch(mdio_lock_enable)
     {
@@ -3657,7 +3703,6 @@ static ssize_t digico_hypermode_store(
     size_t len)
 {
     unsigned int hyper_mode_enable;
-    pr_info("digico_hypermode_store: %s\n", buf);
 
     if (sscanf(buf, "%u", &hyper_mode_enable) != 1)
         return -EINVAL;
@@ -3668,13 +3713,14 @@ static ssize_t digico_hypermode_store(
     switch(hyper_mode_enable)
     {
         case 0:
-            pr_info("hyper disable\n");
+            leave_hyperport_mode();
             break;
         case 1:
             if (!net_common_context->mdio_locked) {
                 pr_warn("Enabling hyperport mode without locking MDIO, locking now");
                 set_mdio_locked(true);
             }
+            enter_hyperport_mode();
             break;
         default:
             pr_err("Invalid digico_hypermode value: %u\n", hyper_mode_enable);
@@ -3684,6 +3730,35 @@ static ssize_t digico_hypermode_store(
 }
 static CLASS_ATTR_WO(digico_hypermode);
 
+static void print_hyperport_assignments(void)
+{
+    int port_idx;
+    for(port_idx = 0; port_idx < sl_get_max_switch_port_number(); port_idx++) {
+        if (digico_hyperport_primary_ports & (1 << port_idx))
+            pr_info("Port %d assigned to primary", port_idx);
+    }
+    for(port_idx = 0; port_idx < sl_get_max_switch_port_number(); port_idx++) {
+        if (digico_hyperport_secondary_ports & (1 << port_idx))
+            pr_info("Port %d assigned to secondary", port_idx);
+    }
+}
+
+static ssize_t digico_hyper_vlans_store(
+    struct class *class,
+    struct class_attribute *attr,
+    const char *buf,
+    size_t len)
+{
+    if (sscanf(buf, "%x:%x", &digico_hyperport_primary_ports, &digico_hyperport_secondary_ports) != 2)
+        return -EINVAL;
+
+    if (!net_common_context)
+        return -ENODEV;
+
+    print_hyperport_assignments();
+    return len;
+}
+static CLASS_ATTR_WO(digico_hyper_vlans);
 
 static int register_digico_sysfs_attributes(struct class* class)
 {
@@ -3701,8 +3776,16 @@ static int register_digico_sysfs_attributes(struct class* class)
         goto out_rm_lockout;
     }
 
+    ret = class_create_file(class, &class_attr_digico_hyper_vlans);
+    if (ret) {
+        pr_err("unable to create digico_hyper_vlans sysfs (%d)\n", ret);
+        goto out_rm_hypermode;
+    }
+
     return ret;
 
+out_rm_hypermode:
+    class_remove_file(class, &class_attr_digico_hypermode);
 out_rm_lockout:
     class_remove_file(class, &class_attr_digico_mdiolock);
     return ret;
@@ -3712,6 +3795,7 @@ static void unregister_digico_sysfs_attributes(struct class* class)
 {
     class_remove_file(class, &class_attr_digico_mdiolock);
     class_remove_file(class, &class_attr_digico_hypermode);
+    class_remove_file(class, &class_attr_digico_hyper_vlans);
 }
 
 static void unregister_char_device(struct net_device *dev)
@@ -5578,7 +5662,7 @@ static int __init akashi_init(void)
 
     printk(KERN_INFO "%s, driver version %s\n", DRIVER_NAME, DRIVER_VERSION);
     printk(KERN_INFO "%s\n", DRIVER_AUTHOR);
-    printk(KERN_INFO "Modified for Hyperport by DiGiCo UK Ltd <liam.pribis@digiconsoles.com>\n");
+    printk(KERN_INFO "Modified for Hyperport by DiGiCo UK Ltd <liam.pribis@digiconsoles.com> 2025\n");
 
     /* Register the platform driver */
     retval = platform_driver_register(&akashi_platform_driver);
