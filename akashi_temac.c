@@ -3734,13 +3734,19 @@ static void enter_hyperport_mode(void)
     vlan_config |= ETH_SWITCH_VLAN_SEC << (4 * 6);
 
     sl_set_switch_vlan_config_all(vlan_config);
+    sl_enable_phy_all(vlan_config);
+    sl_serdes_ports_up_all(vlan_config);
+    sl_enable_switch_all(vlan_config);
 }
 
 static void leave_hyperport_mode(void)
 {
     pr_info("leave_hyperport_mode\n");
-    // restore Dante VLAN config
+    // restore Dante VLAN and port config
     sl_set_switch_vlan_config_all(net_common_context->config.vlan_config);
+    sl_enable_phy_all(net_common_context->config.vlan_config);
+    sl_serdes_ports_up_all(net_common_context->config.vlan_config);
+    sl_enable_switch_all(net_common_context->config.vlan_config);
     // refresh port status
     get_phy_status(net_common_context);
 }
