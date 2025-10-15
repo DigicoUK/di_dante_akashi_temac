@@ -3600,6 +3600,12 @@ void akashi_configure_cpu_port(net_common_t *net_common)
     sl_set_cpu_port(cpu_port);
 }
 
+static void set_mdio_locked(bool locked)
+{
+    net_common_context->mdio_locked = locked;
+    wmb(); // poor man's atomics :^)
+}
+
 static ssize_t digico_mdiolock_store(
     struct class *class,
     struct class_attribute *attr,
@@ -3618,16 +3624,15 @@ static ssize_t digico_mdiolock_store(
     switch(mdio_lock_enable)
     {
         case 0:
-            net_common_context->mdio_locked = false;
+            set_mdio_locked(false);
             break;
         case 1:
-            net_common_context->mdio_locked = true;
+            set_mdio_locked(true);
             break;
         default:
             pr_err("Invalid digico_mdiolock value: %u\n", mdio_lock_enable);
             return -EINVAL;
     }
-    wmb(); // poor man's atomics
     return len;
 }
 static CLASS_ATTR_WO(digico_mdiolock);
@@ -3653,7 +3658,10 @@ static ssize_t digico_hypermode_store(
             pr_info("hyper disable\n");
             break;
         case 1:
-            pr_info("hyper enable\n");
+            if (!net_common_context->mdio_locked) {
+                pr_warn("Enabling hyperport mode without locking MDIO, locking now");
+                set_mdio_locked(true);
+            }
             break;
         default:
             pr_err("Invalid digico_hypermode value: %u\n", hyper_mode_enable);
