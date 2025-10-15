@@ -3627,6 +3627,7 @@ static ssize_t digico_mdiolock_store(
             pr_err("Invalid digico_mdiolock value: %u\n", mdio_lock_enable);
             return -EINVAL;
     }
+    wmb(); // poor man's atomics
     return len;
 }
 static CLASS_ATTR_WO(digico_mdiolock);
