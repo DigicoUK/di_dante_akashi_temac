@@ -3621,9 +3621,9 @@ void akashi_configure_cpu_port(net_common_t *net_common)
 static void enter_hyperport_mode(void)
 {
     int port_idx;
-    pr_info("enter_hyperport_mode");
+    pr_info("enter_hyperport_mode\n");
     if (!digico_hyperport_primary_ports || !digico_hyperport_secondary_ports)
-        pr_warn("One of primary or secondary are not mapped to any ports for hyperport");
+        pr_warn("One of primary or secondary are not mapped to any ports for hyperport\n");
 
     // build VLAN mapping. Format is one nibble per port. Port 0 is in the least
     // significant nibble The bits of the nibble assign the port to:
@@ -3653,7 +3653,7 @@ static void enter_hyperport_mode(void)
 
 static void leave_hyperport_mode(void)
 {
-    pr_info("leave_hyperport_mode");
+    pr_info("leave_hyperport_mode\n");
     // restore Dante VLAN config
     sl_set_switch_vlan_config_all(net_common_context->config.vlan_config);
     // refresh port status
@@ -3662,7 +3662,7 @@ static void leave_hyperport_mode(void)
 
 static void set_mdio_locked(bool locked)
 {
-    pr_info("temac MDIO %s", locked ? "locked" : "unlocked");
+    pr_info("temac MDIO %s\n", locked ? "locked" : "unlocked");
     if (net_common_context) {
         net_common_context->mdio_locked = locked;
         wmb(); // poor man's atomics :^)
@@ -3717,7 +3717,7 @@ static ssize_t digico_hypermode_store(
             break;
         case 1:
             if (!net_common_context->mdio_locked) {
-                pr_warn("Enabling hyperport mode without locking MDIO, locking now");
+                pr_warn("Enabling hyperport mode without locking MDIO, locking now\n");
                 set_mdio_locked(true);
             }
             enter_hyperport_mode();
@@ -3735,11 +3735,11 @@ static void print_hyperport_assignments(void)
     int port_idx;
     for(port_idx = 0; port_idx < sl_get_max_switch_port_number(); port_idx++) {
         if (digico_hyperport_primary_ports & (1 << port_idx))
-            pr_info("Port %d assigned to primary", port_idx);
+            pr_info("Port %d assigned to primary\n", port_idx);
     }
     for(port_idx = 0; port_idx < sl_get_max_switch_port_number(); port_idx++) {
         if (digico_hyperport_secondary_ports & (1 << port_idx))
-            pr_info("Port %d assigned to secondary", port_idx);
+            pr_info("Port %d assigned to secondary\n", port_idx);
     }
 }
 
