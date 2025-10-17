@@ -901,6 +901,10 @@ static int network_mii_process(net_common_t *net_common)
 
     pr_info("@network_mii_process\n");
 
+    // DIGICO patch: ignore switch IRQ when MDIO locked out
+    if (net_common->mdio_locked)
+        return 0;
+
 #ifndef CONFIG_AKASHI_EMAC_0_SMI_IRQ
     /* Use to check if link status really changes in polling mode */
     bool link_st_change = false;
@@ -2322,10 +2326,6 @@ static void denet_smiBH(unsigned long p)
     net_common_t *net_common = (net_common_t *)p;
 
     pr_info("@denet_smiBH\n");
-
-    // DIGICO patch: ignore switch IRQ when MDIO locked out
-    if (net_common->mdio_locked)
-        return;
 
     pr_info("@denet_smiBH post lock check\n");
 
