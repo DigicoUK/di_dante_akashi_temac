@@ -3764,8 +3764,9 @@ static void leave_hyperport_mode(void)
     sl_enable_phy_all(net_common_context->config.vlan_config);
     sl_serdes_ports_up_all(net_common_context->config.vlan_config);
     sl_enable_switch_all(net_common_context->config.vlan_config);
-    // refresh port status
-    get_phy_status(net_common_context);
+
+    // re-scan switch port status
+    network_mii_process(net_common_context);
 }
 
 static void set_mdio_locked(bool locked)
@@ -3792,6 +3793,8 @@ static ssize_t digico_mdiolock_store(
     {
         case 0:
             set_mdio_locked(false);
+            // re-re-scan switch port status just to be sure??
+            network_mii_process(net_common_context);
             break;
         case 1:
             set_mdio_locked(true);
