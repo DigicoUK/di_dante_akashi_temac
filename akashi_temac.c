@@ -848,6 +848,7 @@ static void link_up_process(struct timer_list *t)
     net_local_t *net_local = from_timer(net_local, t, phy_timer);
     struct net_device *dev = net_local->dev;
 
+    pr_info("@link_up_process\n");
     //Clear the FPGA TX FIFO
     //AUD_SYD_SCHED_INTR_CONTROL |= AUD_SYD_SCHED_INTR_CONTROL__TX_FIFO_RST;
 
@@ -856,6 +857,7 @@ static void link_up_process(struct timer_list *t)
     // Only set the carrier to on if the carrier is off
     if (netif_carrier_ok(dev) == 0)
     {
+        pr_info("@link_up_process netif_carrier_on\n");
         netif_carrier_on(dev);
     }
     net_local->link_status = 1;
@@ -873,9 +875,12 @@ static void special_link_up_process(struct timer_list *t)
     net_local_t *net_local = from_timer(net_local, t, phy_timer);
     struct net_device *dev = net_local->dev;
 
+    pr_info("@special_link_up_process\n");
+
     // Only set the carrier to on if the carrier is off
     if (netif_carrier_ok(dev) == 0)
     {
+        pr_info("@special_link_up_process netif_carrier_on\n");
         netif_carrier_on(dev);
     }
 }
@@ -893,6 +898,8 @@ static int network_mii_process(net_common_t *net_common)
     int red_loop_cond=0, index_count=0;
     /* Use common structure for retrieving information on switch redundancy. */
     dante_network_st_t *net_st = &net_common->dante_net_st;
+
+    pr_info("@network_mii_process\n");
 
 #ifndef CONFIG_AKASHI_EMAC_0_SMI_IRQ
     /* Use to check if link status really changes in polling mode */
@@ -972,6 +979,7 @@ static int network_mii_process(net_common_t *net_common)
                     // It can change without a link state change. We force a link down/up event to get the change to user.
                     if (lp_query_interface->mac_speed != phy_speed)
                     {
+                        pr_info("@mac_speed != phy_speed, reset link\n");
                         netif_carrier_off(process_dev);
                         lp_query_interface->link_status = 0;
                         lp_query_interface->mac_speed = phy_speed;
@@ -1013,11 +1021,13 @@ static int network_mii_process(net_common_t *net_common)
 
         if (current_link != netif_link)
         {
+            pr_info("@current_link != netif_link\n");
 #ifndef CONFIG_AKASHI_EMAC_0_SMI_IRQ
 	    link_st_change = true;
 #endif
             if (current_link)
             {
+                pr_info("@current_link up\n");
                 netif_carrier_off(process_dev);
 #ifdef CONFIG_AKASHI_EMAC_0_SMI_IRQ
                 del_timer(&lp_query_interface->phy_timer);
@@ -1032,6 +1042,7 @@ static int network_mii_process(net_common_t *net_common)
             }
             else
             {
+                pr_info("@current_link down\n");
 #ifdef CONFIG_AKASHI_EMAC_0_SMI_IRQ
                 del_timer(&lp_query_interface->phy_timer);    // kill current timer for link up.
 #endif
@@ -1049,10 +1060,12 @@ static int network_mii_process(net_common_t *net_common)
         }
         else
         {
+            pr_info("@current_link %d == netif_link %d\n", current_link, netif_link);
             // Multiple link up/down happened, need to stop current timer & up/down accroding to current condition.
             // condition - currently off + previous off.
             if(!current_link && !netif_link)
             {
+                pr_info("@del_timer\n");
                 del_timer(&lp_query_interface->phy_timer);
             }
         }
@@ -2308,9 +2321,13 @@ static void denet_smiBH(unsigned long p)
 {
     net_common_t *net_common = (net_common_t *)p;
 
+    pr_info("@denet_smiBH\n");
+
     // DIGICO patch: ignore switch IRQ when MDIO locked out
     if (net_common->mdio_locked)
         return;
+
+    pr_info("@denet_smiBH post lock check\n");
 
     // switch interrupt service - clear interrupts status for phys & others
     if (net_common->dante_net_st.net_chip_info.adapter_type == ADAPTER_SWITCH)
