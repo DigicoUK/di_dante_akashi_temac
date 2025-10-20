@@ -106,6 +106,8 @@ typedef enum
 #define DANTE_OTHER_PLATFORM_CPU_PORT_MASK				~(0x20)
 #define SWITCH_DANTE_CPU_PORTS_MASK 					DANTE_OTHER_PLATFORM_CPU_PORT_MASK
 
+#define SUPPORT_SWITCH_88E6361	1
+
 
 /*******************************************
  ******** structure definition *************

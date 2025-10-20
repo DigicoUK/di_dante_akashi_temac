@@ -10,6 +10,9 @@
 
 /*
  * Change History:
+ *  4.1.20: Use the same ioctl handler function for both primary and secondary interfaces.
+ *  4.1.19: Add wmb() operations in denet_txfifo() to solve the TX performance issue.
+ *  4.1.18: Remove the unused code to operate the port rejection registers.
  *  4.1.17: Get unused network interface index before calling register_netdev for IPCore.
  *  4.1.16: Get the FPGA space size from DTS
  *  4.1.15: Add spin lock to protect operating tx_priority_skb_list and tx_skb_list.
@@ -85,7 +88,7 @@
 
 #define DRIVER_AUTHOR                   "Audinate Pty Ltd <oem-support@audinate.com>"
 #define DRIVER_NAME                     "Dante Akashi TEMAC driver" //Max length 32 Bytes
-#define DRIVER_VERSION                  "4.1.17"
+#define DRIVER_VERSION                  "4.1.20"
 #define DRIVER_LICENSE                  "GPL"
 #define FIRMWARE_VERSION                "1.00a"
 #define BUS_INFO                        "IPIF"
@@ -179,10 +182,6 @@ volatile uint8_t *aud_syd_virtual_base_addr;
 network_adapter_t network_adapter_info;
 
 static net_common_t *net_common_context = NULL;
-
-//static int txfifo_debugcounter = 0;
-//static int txfifo_ptp_debugcounter = 0;
-static int tx_debug_print = 0;
 
 static int denet_private_ioctl(struct net_device *dev, struct ifreq *rq, void __user *data, int cmd);
 
@@ -610,14 +609,14 @@ static int get_phy_status(net_common_t *net_common)
             for (i = 0; i < 2; i++)
             {
                 net_st->interface_stat[i].link_status = GET_SWITCH_LINK_UP(iface_reg[i]);
-                net_st->interface_stat[i].link_speed = GET_SWITCH_SPEED(iface_reg[i]);
+                net_st->interface_stat[i].link_speed = net_st->interface_stat[i].link_status ? GET_SWITCH_SPEED(iface_reg[i]) : 0;
                 net_st->interface_stat[i].link_duplex = GET_SWITCH_DUPLEX(iface_reg[i]);
             }
         }
         else
         {
             net_st->interface_stat[0].link_status = GET_SWITCH_LINK_UP(iface_reg[0]);
-            net_st->interface_stat[0].link_speed = GET_SWITCH_SPEED(iface_reg[0]);
+            net_st->interface_stat[0].link_speed = net_st->interface_stat[0].link_status ? GET_SWITCH_SPEED(iface_reg[0]) : 0;
             net_st->interface_stat[0].link_duplex = GET_SWITCH_DUPLEX(iface_reg[0]);
         }
 
@@ -1750,14 +1749,6 @@ static int denet_txfifo(net_common_t *net_common, struct sk_buff *skb, u16 timev
             // printk(KERN_INFO "no room in tx fifo, fifo free space = %d words, tx data = %d words\n", fifocount, maxwords);
             return -1;
         }
-        else
-        {
-            if(tx_debug_print%100 == 0)
-            {
-                //printk(KERN_INFO "%s: all g", __func__);
-            }
-            tx_debug_print++;
-        }
     }
 
     if (val)
@@ -1839,12 +1830,16 @@ static int denet_txfifo(net_common_t *net_common, struct sk_buff *skb, u16 timev
         _swap_on_store(AUD_SYD_SCHED_TX_FIFO_ADDR , 0, (skb->len | fifo_reg_ts));
     }
 
+    // make sure wring to the tx related registers in the right order
+    wmb();
+
     // write out packet
     if (priority_flag)
     {
         for (fifocount = 0; fifocount < wordcount; fifocount++)
         {
             AUD_SYD_SCHED_TX_PRIORITY_FIFO_BASEADDR = data[fifocount];
+            wmb();
         }
     }
     else
@@ -1852,6 +1847,7 @@ static int denet_txfifo(net_common_t *net_common, struct sk_buff *skb, u16 timev
         for (fifocount = 0; fifocount < wordcount; fifocount++)
         {
             AUD_SYD_SCHED_TX_FIFO_BASEADDR = data[fifocount];
+            wmb();
         }
     }
 
@@ -1884,31 +1880,20 @@ static int denet_txfifo(net_common_t *net_common, struct sk_buff *skb, u16 timev
             // write len into fifo
             _swap_on_store(AUD_SYD_SCHED_TX_FIFO_ADDR , 0, lastword);
         }
+        wmb();
     }
 
     // transmit it
     if (priority_flag)
     {
         AUD_SYD_SCHED_TX_FIFO_RELEASE = AUD_SYD_SCHED_TX_FIFO__RELEASE_PRIORITY_PKT;
-        /*
-        if (txfifo_ptp_debugcounter%100 == 0)
-        {
-            printk(KERN_INFO "%s: writing PTP to priority TX FIFO\n", __func__);
-        }
-        txfifo_ptp_debugcounter++;
-        */
     }
     else
     {
         AUD_SYD_SCHED_TX_FIFO_RELEASE = AUD_SYD_SCHED_TX_FIFO__RELEASE_PKT;
-        /*
-        if (txfifo_debugcounter%1000 == 0)
-        {
-            printk(KERN_INFO "%s: We are writing to TX FIFO\n", __func__);
-        }
-        txfifo_debugcounter++;
-        */
     }
+
+    wmb();
 
     if (net_common->debug.flag & AKASHI_DEBUG_BIT_MASK_TX_PAYLOAD)
     {
@@ -2393,57 +2378,6 @@ static int akashi_ifindex_get(struct net_device *dev)
 }
 #endif
 
-/* --------------------------------------------------------------------------
- * ioctl: let user programs configure this interface
- */
-int vnet_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
-{
-    /* mii_ioctl_data has 4 u16 fields: phy_id, reg_num, val_in & val_out */
-    struct linkutil util;
-
-    #if LINUX_VERSION_CODE < KERNEL_VERSION(5,15,0)
-        // Private dev IO control
-        if (cmd >= SIOCDEVPRIVATE && cmd <= SIOCDEVPRIVATE + 15)
-            return denet_private_ioctl(dev, rq, NULL, cmd);
-    #endif
-
-    /* process the command */
-    switch (cmd)
-    {
-#ifdef CONFIG_DEPRECATED_CODE_FIXME /* FIXME: deprecated */
-        case SIOCETHTOOL:
-        {
-            return vnet_do_ethtool_ioctl(dev, rq);
-        }
-#endif
-
-        case SIOCDEVLINKUTIL:
-        {
-            util.tx_bytes_sec = AUD_SYD_MAC_TX1_BYTES;
-            util.rx_bytes_sec = AUD_SYD_MAC_RX1_GOOD_BYTES;
-
-            if (copy_to_user(rq->ifr_data, &util, sizeof (struct linkutil)))
-            {
-                return  -EFAULT;
-            }
-            return 0;
-        }
-
-        case SIOCDEVERRORCLEAR:
-        {
-            clear_error_counter(dev);
-            return 0;
-        }
-
-        default:
-        {
-            return -EOPNOTSUPP;
-        }
-    }
-
-    return 0;
-}
-
 static int vnet_open(struct net_device *dev)
 {
     net_local_t *net_local = netdev_get_priv(dev);
@@ -2559,7 +2493,7 @@ static int denet_stop(struct net_device *dev)
     return 0;
 }
 
-static struct net_device_stats *akashi_get_stats(struct net_device *dev)
+static struct net_device_stats *denet_get_stats(struct net_device *dev)
 {
     net_local_t *net_local = netdev_get_priv(dev);
 
@@ -2574,16 +2508,6 @@ static struct net_device_stats *akashi_get_stats(struct net_device *dev)
     }
 
     return &net_local->stats;
-}
-
-static struct net_device_stats *denet_get_stats(struct net_device *dev)
-{
-    return akashi_get_stats(dev);
-}
-
-static struct net_device_stats *vnet_get_stats(struct net_device *dev)
-{
-    return akashi_get_stats(dev);
 }
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,6,0)
@@ -2910,6 +2834,7 @@ static int denet_private_ioctl(struct net_device *dev, struct ifreq *rq, void __
 	struct mii_ioctl_data mii_data;
 	unsigned long flags;
 	int Result;
+	struct linkutil util;
 
 	switch (cmd)
 	{
@@ -2998,12 +2923,19 @@ static int denet_private_ioctl(struct net_device *dev, struct ifreq *rq, void __
 
 		case SIOCDEVLINKUTIL:
 		{
-			struct linkutil util;
+			if (is_primary_dev(dev))
+			{
+				util.rx_bytes_sec = AUD_SYD_MAC_RX0_GOOD_BYTES;
+				util.tx_bytes_sec = AUD_SYD_MAC_TX0_BYTES;
+			}
+			else
+			{
+				util.rx_bytes_sec = AUD_SYD_MAC_RX1_GOOD_BYTES;
+				util.tx_bytes_sec = AUD_SYD_MAC_TX1_BYTES;
+			}
 
-			util.tx_bytes_sec = AUD_SYD_MAC_TX0_BYTES;
-			util.rx_bytes_sec = AUD_SYD_MAC_RX0_GOOD_BYTES;
 			if (copy_to_user(rq->ifr_data, &util, sizeof (struct linkutil)))
-			return  -EFAULT;
+				return  -EFAULT;
 		}
 		return 0;
 
@@ -3265,18 +3197,9 @@ static void akashi_init_misc(struct net_device *dev)
     net_local_t *net_local = netdev_get_priv(dev);
     net_common_t *net_common = net_local->common;
     int is_primary = (dev == net_common->primary_dev);
-    int i;
 
     if (is_primary)
     {
-        AUD_SYD_PROTO_PHY0_REJECT(0) = 6000;
-        AUD_SYD_PROTO_PHY0_REJECT(1) = 6040;
-        /* Zero rest of broadcast registers. */
-        for (i = 2; i < 8; i++)
-        {
-            AUD_SYD_PROTO_PHY0_REJECT(i) = 0;
-        }
-
         // Block any unicast audio flooding from reaching the CPU
         AUD_SYD_PROTO_PHY0_AUDIO_RANGE_HI = AUD_SYD_PROTO_AUDIO_PORT_HI;
         AUD_SYD_PROTO_PHY0_AUDIO_RANGE_LO = AUD_SYD_PROTO_AUDIO_PORT_LO;
@@ -3285,14 +3208,6 @@ static void akashi_init_misc(struct net_device *dev)
     }
     else
     {
-        AUD_SYD_PROTO_PHY1_REJECT(0) = 6000;
-        AUD_SYD_PROTO_PHY1_REJECT(1) = 6040;
-        /* Zero rest of broadcast registers. */
-        for (i = 2; i < 8; i++)
-        {
-            AUD_SYD_PROTO_PHY1_REJECT(i) = 0;
-        }
-
         // Block any unicast audio flooding from reaching the CPU
         AUD_SYD_PROTO_PHY1_AUDIO_RANGE_HI = AUD_SYD_PROTO_AUDIO_PORT_HI;
         AUD_SYD_PROTO_PHY1_AUDIO_RANGE_LO = AUD_SYD_PROTO_AUDIO_PORT_LO;
@@ -3730,7 +3645,11 @@ static int register_char_devices(struct net_device *dev)
     }
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,3,0)
     net_local->denet_class = class_create(THIS_MODULE, "denet");
+#else
+    net_local->denet_class = class_create("denet");
+#endif
     if (IS_ERR(net_local->denet_class))
     {
         printk(KERN_ERR "Cannot create class");
@@ -4522,13 +4441,13 @@ static const struct net_device_ops denet_secondary_netdev_ops = {
     .ndo_open               = vnet_open,
     .ndo_stop               = vnet_stop,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,15,0)
-    .ndo_eth_ioctl          = vnet_ioctl,
+    .ndo_eth_ioctl          = denet_ioctl,
     .ndo_siocdevprivate     = denet_private_ioctl,
 #else
-    .ndo_do_ioctl           = vnet_ioctl,
+    .ndo_do_ioctl           = denet_ioctl,
 #endif
     .ndo_tx_timeout         = denet_tx_timeout,
-    .ndo_get_stats          = vnet_get_stats,
+    .ndo_get_stats          = denet_get_stats,
     .ndo_set_rx_mode        = akashi_set_multicast_list,
 };
 
@@ -4790,7 +4709,7 @@ static int akashi_probe(struct platform_device *pdev)
 #ifdef CONFIG_AKASHI_64BIT_ARCH
     printk(KERN_INFO "Akashi resource address: 0x%016llx, size: 0x%016llx\n", res->start, net_common->remap_size);
 #else
-    printk(KERN_INFO "Akashi resource address: 0x%08x, size: 0x%08x\n", res->start, net_common->remap_size);
+    printk(KERN_INFO "Akashi resource address: 0x%08x, size: 0x%08lx\n", res->start, net_common->remap_size);
 #endif
     if (!request_mem_region(net_common->phyaddr, net_common->remap_size, "akashi"))
     {

@@ -652,6 +652,7 @@ int sl_serdes_ports_up_all(uint32_t vlan_config)
 		default: serdes_page_num = 0; break;
 	}
 
+#if (SUPPORT_SWITCH_88E6361 == 1)
 	if(switch_name == SWITCH_88E6361)
 	{
 		for(i=0; i<num_serdes_ports; i++)
@@ -681,6 +682,7 @@ int sl_serdes_ports_up_all(uint32_t vlan_config)
 		}
 		return SWITCH_SUCCESS;
 	}
+#endif // SUPPORT_SWITCH_88E6361 == 1
 
 	for(i=0; i<num_serdes_ports; i++)
 	{

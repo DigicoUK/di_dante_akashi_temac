@@ -111,12 +111,14 @@ int sl_get_serdes_intr_status(void)
 int sl_set_intr_serdes(int serdex_port)
 {
 	uint16_t reg_val;
+#if (SUPPORT_SWITCH_88E6361 == 1)
 	if (sl_get_chipset_info()->adapter_name == SWITCH_88E6361)
 	{
 		sl_read_reg_clause45(SWITCH_88E6361_SERDES_DEVICE_ADDR, serdex_port, SWITCH_88E6361_SERDES_FIBER_INT_ENABLE, &reg_val);
 		sl_write_reg_clause45(SWITCH_88E6361_SERDES_DEVICE_ADDR, serdex_port, SWITCH_88E6361_SERDES_FIBER_INT_ENABLE, (reg_val | SWITCH_88E6361_SERDES_LINK_STATUS_CHANGE));
 	}
 	else
+#endif // SUPPORT_SWITCH_88E6361 == 1
 	{
 		sl_read_smi(serdex_port, SWITCH_SERDES_FIBER_INT_ENABLE, &reg_val);
 		sl_write_smi(serdex_port, SWITCH_SERDES_FIBER_INT_ENABLE, (reg_val | SWITCH_PHY_LINK_STATUS_CHANGE) ); // serdes link interrupt enabled.
@@ -132,11 +134,13 @@ int sl_clear_intr_serdes(int serdex_port)
 {
 	uint16_t reg_val;
 
+#if (SUPPORT_SWITCH_88E6361 == 1)
 	if (sl_get_chipset_info()->adapter_name == SWITCH_88E6361)
 	{
 		sl_read_reg_clause45(SWITCH_88E6361_SERDES_DEVICE_ADDR, serdex_port, SWITCH_88E6361_SERDES_FIBER_INT_STATUS, &reg_val);
 	}
 	else
+#endif // SUPPORT_SWITCH_88E6361 == 1
 	{
 		sl_read_smi(serdex_port, SWITCH_SERDES_FIBER_INT_STATUS, &reg_val ); // clear interrupt on SERDES level.
 	}

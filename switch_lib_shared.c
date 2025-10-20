@@ -48,11 +48,13 @@ void sl_lib_init(void)
 	memset(sl_get_chipset_info(), 0, sizeof(network_adapter_t));
 }
 
+#if !(defined LCCK60)
 void sl_lib_smi_handler_register(phy_smi_read_t read, phy_smi_write_t write)
 {
 	sl_get_chipset_info()->phy_smi_read_fn = read;
 	sl_get_chipset_info()->phy_smi_write_fn = write;
 }
+#endif // !LCCK60
 
 // Get adapter information
 #if !(defined LCCK60)
@@ -573,6 +575,7 @@ int sl_get_max_switch_port_number(void)
 	return switch_port_max;
 }
 
+#if !(defined LCCK60)
 void sl_lib_reg_clause45_handler_register(phy_reg_read_clause45_t read, phy_reg_write_clause45_t write)
 {
 	sl_get_chipset_info()->phy_reg_read_clause45_fn = read;
@@ -608,3 +611,4 @@ void sl_get_cpu_port(uint8_t *cpu_port)
 {
 	*cpu_port = sl_get_chipset_info()->cpu_port_num;
 }
+#endif // !LCCK60
