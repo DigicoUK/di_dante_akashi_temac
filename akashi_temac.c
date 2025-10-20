@@ -3678,8 +3678,8 @@ static void set_mdio_locked(bool locked)
 }
 
 static ssize_t digico_mdiolock_store(
-    struct class *class,
-    struct class_attribute *attr,
+    const struct class *class,
+    const struct class_attribute *attr,
     const char *buf,
     size_t len)
 {
@@ -3707,8 +3707,8 @@ static ssize_t digico_mdiolock_store(
 static CLASS_ATTR_WO(digico_mdiolock);
 
 static ssize_t digico_hypermode_store(
-    struct class *class,
-    struct class_attribute *attr,
+    const struct class *class,
+    const struct class_attribute *attr,
     const char *buf,
     size_t len)
 {
@@ -3754,8 +3754,8 @@ static void print_hyperport_assignments(void)
 }
 
 static ssize_t digico_hyper_vlans_store(
-    struct class *class,
-    struct class_attribute *attr,
+    const struct class *class,
+    const struct class_attribute *attr,
     const char *buf,
     size_t len)
 {
