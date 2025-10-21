@@ -436,6 +436,8 @@ typedef struct net_common
 #endif
 
     akashi_debug_t          debug;
+
+    bool                    mdio_locked;
 } net_common_t;
 
 /* --------------------------------------------------------------------------
