@@ -3622,6 +3622,9 @@ void akashi_configure_cpu_port(net_common_t *net_common)
 static void enter_hyperport_mode(void)
 {
     int port_idx;
+    uint32_t vlan_config = 0;
+    uint16_t global_reg_2;
+
     pr_info("enter_hyperport_mode\n");
     if (!digico_hyperport_primary_ports || !digico_hyperport_secondary_ports)
         pr_warn("One of primary or secondary are not mapped to any ports for hyperport\n");
@@ -3633,7 +3636,6 @@ static void enter_hyperport_mode(void)
     // ETH_SWITCH_VLAN_2   = (1 << 2)
     // ETH_SWITCH_VLAN_3   = (1 << 3)
     // VLAN_2 and VLAN_3 enable 802.1Q external VLAN tagging which we don't want
-    uint32_t vlan_config = 0;
     for (port_idx = 0; port_idx < sl_get_max_switch_port_number(); port_idx++) {
         if (digico_hyperport_primary_ports & (1 << port_idx)) {
             // this port is assigned to primary
@@ -3652,7 +3654,8 @@ static void enter_hyperport_mode(void)
     sl_disable_switch_phy_port_all();
     sl_set_switch_vlan_default();
 
-    // TODO purge atu?
+    sl_read_smi(SWITCH_GLOBAL_REGISTER_GROUP_2, SWITCH_GLOBAL_MANAGEMENT_REG, &global_reg_2);
+    sl_write_smi(SWITCH_GLOBAL_REGISTER_GROUP_2, SWITCH_GLOBAL_MANAGEMENT_REG, global_reg_2 | SWITCH_FLOOD_BROADCAST );
 
     sl_set_switch_vlan_config_all(vlan_config);
     sl_enable_phy_all(vlan_config);
