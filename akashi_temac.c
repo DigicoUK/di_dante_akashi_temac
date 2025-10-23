@@ -3649,6 +3649,11 @@ static void enter_hyperport_mode(void)
     // Port 6 (RGMII 1) is always secondary VLAN
     vlan_config |= ETH_SWITCH_VLAN_SEC << (4 * 6);
 
+    sl_disable_switch_phy_port_all();
+    sl_set_switch_vlan_default();
+
+    // TODO purge atu?
+
     sl_set_switch_vlan_config_all(vlan_config);
     sl_enable_phy_all(vlan_config);
     sl_serdes_ports_up_all(vlan_config);
