@@ -3739,7 +3739,7 @@ static void enter_hyperport_mode(void)
     // force enable flood broadcast (only enabled in rest of driver if a control
     // port is enabled -- not the case on Q1)
     sl_read_smi(SWITCH_GLOBAL_REGISTER_GROUP_2, SWITCH_GLOBAL_MANAGEMENT_REG, &global_reg_2);
-    sl_write_smi(SWITCH_GLOBAL_REGISTER_GROUP_2, SWITCH_GLOBAL_MANAGEMENT_REG, reg_val | SWITCH_FLOOD_BROADCAST );
+    sl_write_smi(SWITCH_GLOBAL_REGISTER_GROUP_2, SWITCH_GLOBAL_MANAGEMENT_REG, global_reg_2 | SWITCH_FLOOD_BROADCAST );
 
     sl_set_switch_vlan_config_all(vlan_config);
     // DO NOT enable all phys (they should be already enabled.
