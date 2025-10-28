@@ -3651,11 +3651,10 @@ static void enter_hyperport_mode(void)
     // Port 6 (RGMII 1) is always secondary VLAN
     vlan_config |= ETH_SWITCH_VLAN_SEC << (4 * 6);
 
-    sl_disable_switch_phy_port_all();
-    sl_set_switch_vlan_default();
-
+    // force enable flood broadcast (only enabled in rest of driver if a control
+    // port is enabled -- not the case on Q1)
     sl_read_smi(SWITCH_GLOBAL_REGISTER_GROUP_2, SWITCH_GLOBAL_MANAGEMENT_REG, &global_reg_2);
-    sl_write_smi(SWITCH_GLOBAL_REGISTER_GROUP_2, SWITCH_GLOBAL_MANAGEMENT_REG, global_reg_2 | SWITCH_FLOOD_BROADCAST );
+    sl_write_smi(SWITCH_GLOBAL_REGISTER_GROUP_2, SWITCH_GLOBAL_MANAGEMENT_REG, reg_val | SWITCH_FLOOD_BROADCAST );
 
     sl_set_switch_vlan_config_all(vlan_config);
     sl_enable_phy_all(vlan_config);
@@ -3667,6 +3666,7 @@ static void leave_hyperport_mode(void)
 {
     pr_info("leave_hyperport_mode\n");
     // restore Dante VLAN and port config
+    sl_disable_switch_phy_port_all();
     sl_set_switch_vlan_config_all(net_common_context->config.vlan_config);
     sl_enable_phy_all(net_common_context->config.vlan_config);
     sl_serdes_ports_up_all(net_common_context->config.vlan_config);
@@ -3739,6 +3739,7 @@ static ssize_t digico_hypermode_store(
                 set_mdio_locked(true);
             }
             enter_hyperport_mode();
+            pr_info("enter_hyperport_mode COMPLETED");
             break;
         default:
             pr_err("Invalid digico_hypermode value: %u\n", hyper_mode_enable);
