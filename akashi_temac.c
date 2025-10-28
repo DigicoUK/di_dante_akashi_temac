@@ -3742,7 +3742,11 @@ static void enter_hyperport_mode(void)
     sl_write_smi(SWITCH_GLOBAL_REGISTER_GROUP_2, SWITCH_GLOBAL_MANAGEMENT_REG, reg_val | SWITCH_FLOOD_BROADCAST );
 
     sl_set_switch_vlan_config_all(vlan_config);
-    sl_enable_phy_all(vlan_config);
+    // DO NOT enable all phys (they should be already enabled.
+    // This function also does a software reset on the PHY, forcing an
+    // autonegotiation! This means the port will be dead for ~3s while
+    // autonegotiating
+    // sl_enable_phy_all(vlan_config);
     sl_serdes_ports_up_all(vlan_config);
     sl_enable_switch_all(vlan_config);
 }
@@ -3751,9 +3755,8 @@ static void leave_hyperport_mode(void)
 {
     pr_info("leave_hyperport_mode\n");
     // restore Dante VLAN and port config
-    sl_disable_switch_phy_port_all();
     sl_set_switch_vlan_config_all(net_common_context->config.vlan_config);
-    sl_enable_phy_all(net_common_context->config.vlan_config);
+    //sl_enable_phy_all(net_common_context->config.vlan_config); // see note in enter_hyperport_mode()
     sl_serdes_ports_up_all(net_common_context->config.vlan_config);
     sl_enable_switch_all(net_common_context->config.vlan_config);
 
