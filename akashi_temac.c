@@ -184,6 +184,11 @@ static net_common_t *net_common_context = NULL;
 //static int txfifo_ptp_debugcounter = 0;
 static int tx_debug_print = 0;
 
+// bitmask of port numbers assigned to first RGMII in hyperport mode
+static unsigned int digico_hyperport_primary_ports = 0;
+// bitmask of port numbers assigned to second RGMII in hyperport mode
+static unsigned int digico_hyperport_secondary_ports = 0;
+
 static int denet_private_ioctl(struct net_device *dev, struct ifreq *rq, void __user *data, int cmd);
 
 #ifdef CONFIG_AKASHI_DEBUG_DUMP_SKB_LIST
@@ -890,6 +895,10 @@ static int network_mii_process(net_common_t *net_common)
     /* Use common structure for retrieving information on switch redundancy. */
     dante_network_st_t *net_st = &net_common->dante_net_st;
 
+    // DIGICO patch: ignore switch IRQ when MDIO locked out
+    if (net_common->mdio_locked)
+        return 0;
+
 #ifndef CONFIG_AKASHI_EMAC_0_SMI_IRQ
     /* Use to check if link status really changes in polling mode */
     bool link_st_change = false;
@@ -1189,6 +1198,10 @@ static void network_led_action(char network_type, uint32_t network_ports, char a
 {
     switch_port_led_action action_cmd;
 
+    // DIGICO patch: do not change switch LEDs when MDIO locked out
+    if (net_common_context && net_common_context->mdio_locked)
+        return;
+
     if (action == IDENTIFY_LED_FORCE_ON)
     {
         action_cmd = SWITCH_LED_CONTROL_FORCE_ON;
@@ -1307,6 +1320,11 @@ static void check_link_status(struct timer_list *t)
     /* Set up the timer so we'll get called again in 1 seconds. */
     net_common->check_link_st_timer.expires = jiffies + TIMER_DELAY_1SEC;
     add_timer(&net_common->check_link_st_timer);
+
+    // DIGICO patch: do not poll switch when MDIO locked out
+    if (net_common->mdio_locked)
+        return;
+
     network_mii_process(net_common);
 }
 #endif
@@ -2308,6 +2326,7 @@ static irqreturn_t smi_interrupt(int irq, void *dev_id)
 static void denet_smiBH(unsigned long p)
 {
     net_common_t *net_common = (net_common_t *)p;
+
 
     // switch interrupt service - clear interrupts status for phys & others
     if (net_common->dante_net_st.net_chip_info.adapter_type == ADAPTER_SWITCH)
@@ -3685,6 +3704,207 @@ void akashi_configure_cpu_port(net_common_t *net_common)
     sl_set_cpu_port(cpu_port);
 }
 
+static void enter_hyperport_mode(void)
+{
+    int port_idx;
+    uint32_t vlan_config = 0;
+    uint16_t global_reg_2;
+
+    pr_info("enter_hyperport_mode\n");
+    if (!digico_hyperport_primary_ports || !digico_hyperport_secondary_ports)
+        pr_warn("One of primary or secondary are not mapped to any ports for hyperport\n");
+
+    // build VLAN mapping. Format is one nibble per port. Port 0 is in the least
+    // significant nibble The bits of the nibble assign the port to:
+    // ETH_SWITCH_VLAN_PRI = (1 << 0)
+    // ETH_SWITCH_VLAN_SEC = (1 << 1)
+    // ETH_SWITCH_VLAN_2   = (1 << 2)
+    // ETH_SWITCH_VLAN_3   = (1 << 3)
+    // VLAN_2 and VLAN_3 enable 802.1Q external VLAN tagging which we don't want
+    for (port_idx = 0; port_idx < sl_get_max_switch_port_number(); port_idx++) {
+        if (digico_hyperport_primary_ports & (1 << port_idx)) {
+            // this port is assigned to primary
+            vlan_config |= ETH_SWITCH_VLAN_PRI << (4 * port_idx);
+        }
+        if (digico_hyperport_secondary_ports & (1 << port_idx)) {
+            // this port is assigned to primary
+            vlan_config |= ETH_SWITCH_VLAN_SEC << (4 * port_idx);
+        }
+    }
+    // Port 5 (RGMII 0) is always primary VLAN otherwise no packets reach PL
+    vlan_config |= ETH_SWITCH_VLAN_PRI << (4 * 5);
+    // Port 6 (RGMII 1) is always secondary VLAN
+    vlan_config |= ETH_SWITCH_VLAN_SEC << (4 * 6);
+
+    // force enable flood broadcast (only enabled in rest of driver if a control
+    // port is enabled -- not the case on Q1)
+    sl_read_smi(SWITCH_GLOBAL_REGISTER_GROUP_2, SWITCH_GLOBAL_MANAGEMENT_REG, &global_reg_2);
+    sl_write_smi(SWITCH_GLOBAL_REGISTER_GROUP_2, SWITCH_GLOBAL_MANAGEMENT_REG, global_reg_2 | SWITCH_FLOOD_BROADCAST );
+
+    sl_set_switch_vlan_config_all(vlan_config);
+    // DO NOT enable all phys (they should be already enabled.
+    // This function also does a software reset on the PHY, forcing an
+    // autonegotiation! This means the port will be dead for ~3s while
+    // autonegotiating
+    // sl_enable_phy_all(vlan_config);
+    sl_serdes_ports_up_all(vlan_config);
+    sl_enable_switch_all(vlan_config);
+}
+
+static void leave_hyperport_mode(void)
+{
+    pr_info("leave_hyperport_mode\n");
+    // restore Dante VLAN and port config
+    sl_set_switch_vlan_config_all(net_common_context->config.vlan_config);
+    //sl_enable_phy_all(net_common_context->config.vlan_config); // see note in enter_hyperport_mode()
+    sl_serdes_ports_up_all(net_common_context->config.vlan_config);
+    sl_enable_switch_all(net_common_context->config.vlan_config);
+
+    // re-scan switch port status
+    network_mii_process(net_common_context);
+}
+
+static void set_mdio_locked(bool locked)
+{
+    pr_info("temac MDIO %s\n", locked ? "locked" : "unlocked");
+    if (net_common_context) {
+        net_common_context->mdio_locked = locked;
+        wmb(); // poor man's atomics :^)
+    }
+}
+
+static ssize_t digico_mdiolock_store(
+    struct class *class,
+    struct class_attribute *attr,
+    const char *buf,
+    size_t len)
+{
+    unsigned int mdio_lock_enable;
+
+    if (sscanf(buf, "%u", &mdio_lock_enable) != 1)
+        return -EINVAL;
+
+    switch(mdio_lock_enable)
+    {
+        case 0:
+            set_mdio_locked(false);
+            // re-re-scan switch port status just to be sure??
+            network_mii_process(net_common_context);
+            break;
+        case 1:
+            set_mdio_locked(true);
+            break;
+        default:
+            pr_err("Invalid digico_mdiolock value: %u\n", mdio_lock_enable);
+            return -EINVAL;
+    }
+    return len;
+}
+static CLASS_ATTR_WO(digico_mdiolock);
+
+static ssize_t digico_hypermode_store(
+    struct class *class,
+    struct class_attribute *attr,
+    const char *buf,
+    size_t len)
+{
+    unsigned int hyper_mode_enable;
+
+    if (sscanf(buf, "%u", &hyper_mode_enable) != 1)
+        return -EINVAL;
+
+    if (!net_common_context)
+        return -ENODEV;
+
+    switch(hyper_mode_enable)
+    {
+        case 0:
+            leave_hyperport_mode();
+            break;
+        case 1:
+            if (!net_common_context->mdio_locked) {
+                pr_warn("Enabling hyperport mode without locking MDIO, locking now\n");
+                set_mdio_locked(true);
+            }
+            enter_hyperport_mode();
+            pr_info("enter_hyperport_mode COMPLETED");
+            break;
+        default:
+            pr_err("Invalid digico_hypermode value: %u\n", hyper_mode_enable);
+            return -EINVAL;
+    }
+    return len;
+}
+static CLASS_ATTR_WO(digico_hypermode);
+
+static void print_hyperport_assignments(void)
+{
+    int port_idx;
+    for(port_idx = 0; port_idx < sl_get_max_switch_port_number(); port_idx++) {
+        if (digico_hyperport_primary_ports & (1 << port_idx))
+            pr_info("Port %d assigned to primary\n", port_idx);
+    }
+    for(port_idx = 0; port_idx < sl_get_max_switch_port_number(); port_idx++) {
+        if (digico_hyperport_secondary_ports & (1 << port_idx))
+            pr_info("Port %d assigned to secondary\n", port_idx);
+    }
+}
+
+static ssize_t digico_hyper_vlans_store(
+    struct class *class,
+    struct class_attribute *attr,
+    const char *buf,
+    size_t len)
+{
+    if (sscanf(buf, "%x:%x", &digico_hyperport_primary_ports, &digico_hyperport_secondary_ports) != 2)
+        return -EINVAL;
+
+    if (!net_common_context)
+        return -ENODEV;
+
+    print_hyperport_assignments();
+    return len;
+}
+static CLASS_ATTR_WO(digico_hyper_vlans);
+
+static int register_digico_sysfs_attributes(struct class* class)
+{
+    int ret = 0;
+
+    ret = class_create_file(class, &class_attr_digico_mdiolock);
+    if (ret) {
+        pr_err("unable to create digico_mdiolock sysfs (%d)\n", ret);
+        return ret;
+    }
+
+    ret = class_create_file(class, &class_attr_digico_hypermode);
+    if (ret) {
+        pr_err("unable to create digico_hypermode sysfs (%d)\n", ret);
+        goto out_rm_lockout;
+    }
+
+    ret = class_create_file(class, &class_attr_digico_hyper_vlans);
+    if (ret) {
+        pr_err("unable to create digico_hyper_vlans sysfs (%d)\n", ret);
+        goto out_rm_hypermode;
+    }
+
+    return ret;
+
+out_rm_hypermode:
+    class_remove_file(class, &class_attr_digico_hypermode);
+out_rm_lockout:
+    class_remove_file(class, &class_attr_digico_mdiolock);
+    return ret;
+}
+
+static void unregister_digico_sysfs_attributes(struct class* class)
+{
+    class_remove_file(class, &class_attr_digico_mdiolock);
+    class_remove_file(class, &class_attr_digico_hypermode);
+    class_remove_file(class, &class_attr_digico_hyper_vlans);
+}
+
 static void unregister_char_device(struct net_device *dev)
 {
     net_local_t *net_local = netdev_get_priv(dev);
@@ -3692,6 +3912,8 @@ static void unregister_char_device(struct net_device *dev)
 #ifdef CONFIG_AKASHI_DEBUG_CHAR_DEV
     printk(KERN_INFO "%s...\n", __func__);
 #endif
+
+    unregister_digico_sysfs_attributes(net_local->denet_class);
 
     device_destroy(net_local->denet_class, net_local->denet_devt);
     device_destroy(net_local->denet_class, net_local->denet_ps_devt);
@@ -3782,7 +4004,9 @@ static int register_char_devices(struct net_device *dev)
     }
 #endif
 
-    return 0;
+    status = register_digico_sysfs_attributes(net_local->denet_class);
+
+    return status;
 }
 
 #ifdef CONFIG_AKASHI_CONFIGURE_SWITCH
@@ -5541,6 +5765,7 @@ static int __init akashi_init(void)
 
     printk(KERN_INFO "%s, driver version %s\n", DRIVER_NAME, DRIVER_VERSION);
     printk(KERN_INFO "%s\n", DRIVER_AUTHOR);
+    printk(KERN_INFO "Modified for Hyperport by DiGiCo UK Ltd <liam.pribis@digiconsoles.com> 2025\n");
 
     /* Register the platform driver */
     retval = platform_driver_register(&akashi_platform_driver);
